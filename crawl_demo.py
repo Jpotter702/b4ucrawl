@@ -17,10 +17,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
-from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
-from crawl4ai.async_crawler import AsyncWebCrawler
-from crawl4ai.extraction import LLMExtractionStrategy, LLMConfig
-from crawl4ai.models import CrawlResult
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, LLMConfig, LLMExtractionStrategy, CrawlResult
 
 # Load environment variables from .env file
 load_dotenv()
@@ -57,8 +54,11 @@ async def perform_crawl(url: str, browser_config: Dict = None, crawler_config: D
         CrawlResult: The result of the crawl operation
     """
     # Use default configs if not provided
-    browser_cfg = BrowserConfig.from_kwargs(browser_config or DEFAULT_BROWSER_CONFIG)
-    crawler_cfg = CrawlerRunConfig.from_kwargs(crawler_config or DEFAULT_CRAWLER_CONFIG)
+    browser_config = browser_config or DEFAULT_BROWSER_CONFIG
+    crawler_config = crawler_config or DEFAULT_CRAWLER_CONFIG
+    
+    browser_cfg = BrowserConfig(**browser_config)
+    crawler_cfg = CrawlerRunConfig(**crawler_config)
     
     # Initialize the crawler
     crawler = AsyncWebCrawler(config=browser_cfg)
@@ -66,12 +66,11 @@ async def perform_crawl(url: str, browser_config: Dict = None, crawler_config: D
     
     try:
         # Execute the crawl
-        results = await crawler.arun(url=url, config=crawler_cfg)
-        # Return the first result (there's only one since we're crawling a single URL)
-        return results[0] if isinstance(results, list) else results
+        result = await crawler.arun(url=url, config=crawler_cfg)
+        return result
     finally:
-        # Always stop the crawler to clean up resources
-        await crawler.stop()
+        # Always close the crawler to clean up resources
+        await crawler.close()
 
 
 async def extract_structured_data(url: str, instruction: str, llm_provider: str = None, api_token: str = None) -> Dict:
@@ -96,7 +95,7 @@ async def extract_structured_data(url: str, instruction: str, llm_provider: str 
         return {}
     
     # Configure browser and crawler
-    browser_cfg = BrowserConfig.from_kwargs(DEFAULT_BROWSER_CONFIG)
+    browser_cfg = BrowserConfig(**DEFAULT_BROWSER_CONFIG)
     
     # Create LLM extraction strategy
     extraction_strategy = LLMExtractionStrategy(
@@ -108,10 +107,10 @@ async def extract_structured_data(url: str, instruction: str, llm_provider: str 
     )
     
     # Configure crawler with extraction strategy
-    crawler_cfg = CrawlerRunConfig.from_kwargs({
+    crawler_cfg = CrawlerRunConfig(
         **DEFAULT_CRAWLER_CONFIG,
-        "extraction_strategy": extraction_strategy,
-    })
+        extraction_strategy=extraction_strategy,
+    )
     
     # Initialize the crawler
     crawler = AsyncWebCrawler(config=browser_cfg)
@@ -119,8 +118,7 @@ async def extract_structured_data(url: str, instruction: str, llm_provider: str 
     
     try:
         # Execute the crawl with extraction
-        results = await crawler.arun(url=url, config=crawler_cfg)
-        result = results[0] if isinstance(results, list) else results
+        result = await crawler.arun(url=url, config=crawler_cfg)
         
         # Parse and return the extracted content
         if result.success and result.extracted_content:
@@ -129,8 +127,8 @@ async def extract_structured_data(url: str, instruction: str, llm_provider: str 
             console.print(f"[bold red]Error:[/] Failed to extract data: {result.error_message}")
             return {}
     finally:
-        # Always stop the crawler
-        await crawler.stop()
+        # Always close the crawler
+        await crawler.close()
 
 
 @click.group()
@@ -139,14 +137,8 @@ def cli():
     pass
 
 
-@cli.command("crawl")
-@click.argument("url", required=True)
-@click.option("--output", "-o", type=click.Choice(["json", "markdown"]), default="markdown", 
-              help="Output format (json or markdown)")
-@click.option("--headless/--no-headless", default=True, help="Run in headless mode")
-@click.option("--verbose/--no-verbose", default=False, help="Enable verbose output")
-def crawl_cmd(url: str, output: str, headless: bool, verbose: bool):
-    """Crawl a website and display its content"""
+def run_crawl(url: str, output: str, headless: bool, verbose: bool):
+    """Core crawl function without Click decorators"""
     # Update config with command line options
     browser_config = {**DEFAULT_BROWSER_CONFIG, "headless": headless}
     crawler_config = {**DEFAULT_CRAWLER_CONFIG, "verbose": verbose}
@@ -154,7 +146,13 @@ def crawl_cmd(url: str, output: str, headless: bool, verbose: bool):
     console.print(f"[bold blue]Crawling:[/] {url}")
     
     # Run the crawl
-    result = asyncio.run(perform_crawl(url, browser_config, crawler_config))
+    try:
+        result = asyncio.run(perform_crawl(url, browser_config, crawler_config))
+    except Exception as e:
+        console.print(f"[bold red]Error in crawl_cmd:[/] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return
     
     if result.success:
         console.print("[bold green]Crawl successful![/]")
@@ -174,13 +172,19 @@ def crawl_cmd(url: str, output: str, headless: bool, verbose: bool):
         console.print(f"[bold red]Crawl failed:[/] {result.error_message}")
 
 
-@cli.command("extract")
+@cli.command("crawl")
 @click.argument("url", required=True)
-@click.argument("instruction", required=False, default="Extract main content and metadata as structured JSON")
-@click.option("--provider", "-p", help="LLM provider (e.g., openai/gpt-4)")
-@click.option("--token", "-t", help="API token for the LLM provider")
-def extract_cmd(url: str, instruction: str, provider: str, token: str):
-    """Extract structured data from a website using LLM"""
+@click.option("--output", "-o", type=click.Choice(["json", "markdown"]), default="markdown", 
+              help="Output format (json or markdown)")
+@click.option("--headless/--no-headless", default=True, help="Run in headless mode")
+@click.option("--verbose/--no-verbose", default=False, help="Enable verbose output")
+def crawl_cmd(url: str, output: str, headless: bool, verbose: bool):
+    """Crawl a website and display its content"""
+    run_crawl(url, output, headless, verbose)
+
+
+def run_extract(url: str, instruction: str, provider: str, token: str):
+    """Core extract function without Click decorators"""
     console.print(f"[bold blue]Extracting data from:[/] {url}")
     console.print(f"[bold blue]Instruction:[/] {instruction}")
     
@@ -193,6 +197,16 @@ def extract_cmd(url: str, instruction: str, provider: str, token: str):
                            title="Extracted Data", expand=False))
     else:
         console.print("[bold red]Extraction failed[/]")
+
+
+@cli.command("extract")
+@click.argument("url", required=True)
+@click.argument("instruction", required=False, default="Extract main content and metadata as structured JSON")
+@click.option("--provider", "-p", help="LLM provider (e.g., openai/gpt-4)")
+@click.option("--token", "-t", help="API token for the LLM provider")
+def extract_cmd(url: str, instruction: str, provider: str, token: str):
+    """Extract structured data from a website using LLM"""
+    run_extract(url, instruction, provider, token)
 
 
 if __name__ == "__main__":

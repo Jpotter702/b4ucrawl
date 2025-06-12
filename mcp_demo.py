@@ -19,9 +19,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
-from crawl4ai.async_crawler import AsyncWebCrawler
-from crawl4ai.models import CrawlResult
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CrawlResult
 
 # Load environment variables from .env file
 load_dotenv()
@@ -125,8 +123,11 @@ async def perform_crawl(url: str, browser_config: Dict = None, crawler_config: D
         CrawlResult: The result of the crawl operation
     """
     # Use default configs if not provided
-    browser_cfg = BrowserConfig.from_kwargs(browser_config or DEFAULT_BROWSER_CONFIG)
-    crawler_cfg = CrawlerRunConfig.from_kwargs(crawler_config or DEFAULT_CRAWLER_CONFIG)
+    browser_config = browser_config or DEFAULT_BROWSER_CONFIG
+    crawler_config = crawler_config or DEFAULT_CRAWLER_CONFIG
+    
+    browser_cfg = BrowserConfig(**browser_config)
+    crawler_cfg = CrawlerRunConfig(**crawler_config)
     
     # Initialize the crawler
     crawler = AsyncWebCrawler(config=browser_cfg)
@@ -134,12 +135,11 @@ async def perform_crawl(url: str, browser_config: Dict = None, crawler_config: D
     
     try:
         # Execute the crawl
-        results = await crawler.arun(url=url, config=crawler_cfg)
-        # Return the first result (there's only one since we're crawling a single URL)
-        return results[0] if isinstance(results, list) else results
+        result = await crawler.arun(url=url, config=crawler_cfg)
+        return result
     finally:
-        # Always stop the crawler to clean up resources
-        await crawler.stop()
+        # Always close the crawler to clean up resources
+        await crawler.close()
 
 
 @click.group()

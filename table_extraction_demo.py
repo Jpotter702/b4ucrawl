@@ -18,9 +18,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table as RichTable
 
-from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
-from crawl4ai.async_crawler import AsyncWebCrawler
-from crawl4ai.models import CrawlResult
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CrawlResult
 
 # Load environment variables from .env file
 load_dotenv()
@@ -58,12 +56,13 @@ async def extract_tables(url: str, browser_config: Dict = None, crawler_config: 
         List[Dict]: A list of extracted tables
     """
     # Use default configs if not provided
-    browser_cfg = BrowserConfig.from_kwargs(browser_config or DEFAULT_BROWSER_CONFIG)
+    browser_config = browser_config or DEFAULT_BROWSER_CONFIG
+    browser_cfg = BrowserConfig(**browser_config)
     
     # Configure crawler with table extraction settings
-    crawler_cfg_dict = crawler_config or DEFAULT_CRAWLER_CONFIG.copy()
+    crawler_cfg_dict = (crawler_config or DEFAULT_CRAWLER_CONFIG).copy()
     crawler_cfg_dict["table_score_threshold"] = crawler_cfg_dict.get("table_score_threshold", 8)
-    crawler_cfg = CrawlerRunConfig.from_kwargs(crawler_cfg_dict)
+    crawler_cfg = CrawlerRunConfig(**crawler_cfg_dict)
     
     # Initialize the crawler
     crawler = AsyncWebCrawler(config=browser_cfg)
@@ -71,8 +70,7 @@ async def extract_tables(url: str, browser_config: Dict = None, crawler_config: 
     
     try:
         # Execute the crawl
-        results = await crawler.arun(url=url, config=crawler_cfg)
-        result = results[0] if isinstance(results, list) else results
+        result = await crawler.arun(url=url, config=crawler_cfg)
         
         # Extract tables from the result
         tables = []
@@ -81,8 +79,8 @@ async def extract_tables(url: str, browser_config: Dict = None, crawler_config: 
         
         return tables
     finally:
-        # Always stop the crawler to clean up resources
-        await crawler.stop()
+        # Always close the crawler to clean up resources
+        await crawler.close()
 
 
 def display_table(table_data: Dict):
